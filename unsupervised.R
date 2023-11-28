@@ -13,11 +13,25 @@ drop_X <- function(df) {
   return(df)
 }
 
-# Offer: Listed properties webscraped from Bayut (noisy!!)
+# Offer: Listed properties webscraped from Bayut
 # Demand: Real transactions extracted from Dubai Land Deparment API
+# Note that we have less year-months in offer than in demand
 
 emirate_offer <- drop_X(read.csv(paste0(DIR,'offer_emirate.csv')) %>% as.data.table)
-community_offer <- drop_X(read.csv(paste0(DIR,'offer_by_community.csv')) %>% as.data.table)
+emirate_demand <- drop_X(read.csv(paste0(DIR,'demand_emirate.csv')) %>% as.data.table)
+
+nulls <- colSums(is.na(emirate_offer))
+print(nulls[nulls!=0])
+
+# Drop offplan (many nulls)
+cols <- setdiff(names(emirate_offer),  grep('offplan', names(emirate_offer), value=T))
+emirate_offer <- emirate_offer[, .SD, .SDcols = cols]
+
+nulls <- colSums(is.na(emirate_offer))
+print(nulls[nulls!=0])
+
+nulls <- colSums(is.na(emirate_demand))
+print(nulls[nulls!=0])
 
 emirate_demand <- drop_X(read.csv(paste0(DIR,'demand_emirate.csv')) %>% as.data.table)
 community_demand <- drop_X(read.csv(paste0(DIR,'demand_by_community.csv')) %>% as.data.table)
@@ -30,6 +44,9 @@ cat('Demand:', dim(emirate_demand),':', dim(community_demand))
 
 # Perform lag percentage (house price index does sth like this)
 # value_pct = (value - shifted_value) / shifted_value
+# It performs this lag percentage for each column. 
+# get(col) helps to work iteratively with any column
+# 
 # Positive values indicate, this column has increased with respect to shift reference
 # Negative values indicate, this column has decreased with respect to shift reference
 lag_percentage <- function(df, lags, by_cols=NULL) {
@@ -54,18 +71,18 @@ lags <- c(3, 6, 12, 18)
 emirate_offer_ <- lag_percentage(emirate_offer, lags)
 emirate_demand_ <- lag_percentage(emirate_demand, lags)
 
-community_offer_ <- lag_percentage(community_offer, lags, 'community')
-community_demand_ <- lag_percentage(community_demand, lags, 'community')
-
+# Set keys and drop NULL
 setindex(emirate_demand_, dt_year, dt_month)
 emirate_demand_ <- emirate_demand_ %>% drop_na()
 setindex(emirate_offer_, dt_year, dt_month)
 emirate_offer_ <- emirate_offer_ %>% drop_na()
 
 cat('Emirate:', dim(emirate_offer_),':', dim(emirate_demand_))
-cat('Community', dim(community_offer_),':', dim(community_demand_))
 
 perform_pca <- function(df) {
+  # Select only the desired columns
+  # grep is similar to string filter 
+  # (select only those columns that have "lag" in its name)
   cols <- setdiff(names(df), c('dt_year','dt_month'))
   cols <- grep("lag", cols, value = TRUE)
   
@@ -78,7 +95,7 @@ perform_pca <- function(df) {
   return(list(pca = data.pca, transf_data = pca_transformed_data))
 }
 
-# Offer
+# OFFER
 x <- perform_pca(emirate_offer_)
 data.pca <- x$pca
 pca_transformed_data <- x$transf_data
@@ -99,7 +116,7 @@ emirate_offer_transformed <- cbind(emirate_offer_,
   .[, date := as.Date(paste(dt_year, dt_month, "01", sep = "-"))]
 
 
-# Demand
+# DEMAND
 x <- perform_pca(emirate_demand_)
 data.pca <- x$pca
 pca_transformed_data <- x$transf_data
@@ -178,11 +195,22 @@ ggplot(plot_data, aes(x=date)) +
 
 
 ###### COMMUNITY
-community_ <- "Dubai Marina" #"Jumeirah Lake Towers (JLT)" "Jumeirah Beach Residence (JBR)"
+emirate_offer <- drop_X(read.csv(paste0(DIR,'offer_by_community.csv')) %>% as.data.table)
+emirate_demand <- drop_X(read.csv(paste0(DIR,'demand_by_community.csv')) %>% as.data.table)
+
+community_ <- "Jumeirah Lake Towers (JLT)" #"Dubai Marina" "Jumeirah Lake Towers (JLT)" "Jumeirah Beach Residence (JBR)"
 lags <- c(3, 6, 12)
 
 community_offer_ <- lag_percentage(community_offer, lags, 'community')
 community_demand_ <- lag_percentage(community_demand, lags, 'community')
+
+### Drop offplan in offer (many nulls)
+cols <- setdiff(names(community_offer),  grep('offplan', names(community_offer), value=T))
+community_offer <- community_offer[, .SD, .SDcols = cols]
+
+nulls <- colSums(is.na(community_offer))
+print(nulls[nulls!=0])
+###
 
 setindex(community_offer_, dt_year, dt_month, community)
 community_offer_ <- community_offer_ %>% drop_na()
@@ -192,6 +220,8 @@ community_demand_ <- community_demand_ %>% drop_na()
 # Subset
 community_offer_ <- community_offer_[community == community_]
 community_demand_ <- community_demand_[community == community_]
+
+cat('Community', dim(community_offer_),':', dim(community_demand_))
 
 # Offer
 x <- perform_pca(community_offer_)
