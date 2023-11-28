@@ -18,10 +18,8 @@ community_offer <- drop_X(read.csv(paste0(DIR,'offer_by_community.csv')) %>% as.
 emirate_demand <- drop_X(read.csv(paste0(DIR,'demand_emirate.csv')) %>% as.data.table)
 community_demand <- drop_X(read.csv(paste0(DIR,'demand_by_community.csv')) %>% as.data.table)
 
-dim(emirate_offer)
-dim(community_offer)
-dim(emirate_demand)
-dim(community_demand)
+cat(dim(emirate_offer),':', dim(community_offer))
+cat(dim(emirate_demand),':', dim(community_demand))
 
 # LAGS
 lag_data <- function(df, lags, by_cols=NULL) {
@@ -43,13 +41,11 @@ lag_data <- function(df, lags, by_cols=NULL) {
   }
   return(df_)
 }
-
 lags <- c(1, 3, 6)
-d <- lag_data(emirate_offer, lags)
-d
 
-c <- lag_data(community_offer, lags, 'community')
+emirate_offer_ <- lag_data(emirate_offer, lags)
+emirate_demand_ <- lag_data(emirate_demand, lags)
 
-emirate_offer[, emirate_price_area_q75_s1 := shift(emirate_price_area_q75)]
-
+community_offer_ <- lag_data(community_offer, lags, 'community')
+community_demand_ <- lag_data(community_demand, lags, 'community')
 
