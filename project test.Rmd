@@ -1,0 +1,162 @@
+---
+title: "Statistical modelling and inference - project test"
+author: "Jonny Bramwell-Codd"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+---
+
+Load packages
+```{r, message=FALSE}
+library(hdm)
+library(glmnet)
+library(ggplot2)
+library(tidyverse)
+library(HDCI)
+library(gridExtra)
+library(pROC)
+library("adapt4pv")
+library(readr)
+library(dplyr)
+```
+
+## Load data
+```{r}
+# Load data
+train <- read.csv('data/realestate_train.csv')
+test <- read.csv('data/realestate_test.csv')
+
+# Drop X column
+train$X <-NA
+test$X <-NA
+
+# Convert date to numeric
+train$date_added <- as.Date(train$date_added)
+test$date_added <- as.Date(test$date_added)
+
+# Identify numeric columns
+numeric <- sapply(train, is.numeric)
+
+# Subset the dataframe to keep only numeric or date columns
+train <- train[, numeric]
+test <- test[, numeric]
+
+# Split into X and Y
+x_train <- select(train, -price)
+y_train <- train$price
+
+x_test <- select(test, -price)
+y_test <- test$price
+
+# Scale 
+x_train <- scale(x_train)
+x_test <- scale(x_test)
+```
+
+
+## Summmarize data 
+
+```{r}
+summary(y_test)
+```
+
+# LASSO CV
+
+```{r}
+fit.lasso = cv.glmnet(x=as.matrix(x_train), y=y_train, nfolds=10)
+fit.lasso
+```
+# Test out of sample
+```{r}
+pred <- predict(fit.lasso, newx = as.matrix(x_test), s = fit.lasso$lambda.min, type = "response")
+```
+
+```{r}
+# RMSE
+rmse <- function(observed, predicted) {
+  sqrt(mean((observed - predicted) ^ 2))
+}
+
+#1] 251022.9
+# 266667.9
+#272910.1
+
+# 265768.6
+
+rmse_value <- rmse(y_test, pred)
+print(rmse_value)
+
+```
+
+```{r}
+# Extract coefficients
+coef_lasso <- predict(fit.lasso, type = "coefficients", s = fit.lasso$lambda.min)
+
+# Convert the sparse matrix to a regular matrix
+coef_matrix <- as.matrix(coef_lasso)
+
+# Create a data frame
+coef_table <- data.frame(
+  Variable = row.names(coef_matrix),
+  Coefficient = coef_matrix[,1]
+)
+
+# View the table
+coef_table
+
+```
+
+
+# Bayesian model selection
+
+## Fit model and predict
+
+```{r}
+library(mombf) # Bayesian model selection and Bayesian model averaging
+fit.bayesreg <- modelSelection(y=y_train, x=as.matrix(x_train), priorCoef=zellnerprior(taustd=1), priorDelta=modelbbprior(1,1))
+
+b= as.vector(coef(fit.bayesreg)[,1])
+b = b[-length(b)] # Remove phi estimate
+predict_b <- b[1] + as.matrix(x_test) %*% as.matrix(b[-1])
+```
+
+##  RSME
+```{r}
+rmse_value <- rmse(y_test, predict_b)
+print(rmse_value)
+```
+
+```{r}
+x_train$AED_USD_price_mean <- NULL
+x_train$AED_USD_price_median <- NULL
+x_train$AED_USD_price_q25 <- NULL
+x_train$AED_USD_price_q75 <- NULL
+
+x_test$AED_USD_price_mean <- NULL
+x_test$AED_USD_price_median <- NULL
+x_test$AED_USD_price_q25 <- NULL
+x_test$AED_USD_price_q75 <- NULL
+```
+
+```{r}
+library(rstanarm)
+
+# Example: Bayesian linear regression with Gaussian and double-exponential priors
+# Assuming 'y' is the dependent variable and 'x' is the independent variable in your dataframe 'data'
+
+# Specify the model
+# Using Gaussian prior for the intercept and double-exponential prior for the coefficients
+model_b <- stan_glm(y_train ~ as.matrix(x_train),
+                  family = gaussian(),
+                  prior = laplace(location = 0, scale = 2.5), # Double-exponential prior for coefficients
+                  prior_intercept = normal(0, 10)) # Gaussian prior for the intercept
+```
+
+```{r}
+pred_b <- predict(fit_b, newx = as.matrix(x_test), type = "response")
+rmse_value <- rmse(y_test, pred_b)
+print(rmse_value)
+```
+
