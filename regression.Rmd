@@ -49,6 +49,8 @@ dummy_subdistricts <- T
 dummy_coordinates <- T
 qcuts <- 50
 drop_prev_prices <- T
+
+log_price <- T
 ```
 
 ```{r}
@@ -199,10 +201,20 @@ train <- train[, !colnames(train) %in% pairs_to_remove]
 ```{r}
 # Split into X and Y for scaling
 x_train <- select(train, -price)
-y_train <- train$price/1000
+y_train_orig <- train$price
+if (log_price) {
+  y_train <- log10(train$price)
+} else{
+  y_train <- train$price/1000
+}
 
 x_test <- select(test, -price)
-y_test <- test$price/1000
+y_test_orig <- test$price
+if (log_price) {
+  y_test <- log10(test$price)
+} else{
+  y_test <- test$price/1000
+}
 
 # Save unscaled
 x_train_unscaled <- x_train
@@ -233,9 +245,21 @@ test_df<-cbind(x_test_df,y_test_df)
 
 ## Define RMSE 
 ```{r}
-# RMSE
+# Regression metrics
 rmse <- function(observed, predicted) {
   sqrt(mean((observed - predicted) ^ 2))
+}
+
+log_rmse <- function(observed, predicted) {
+  sqrt(mean((log(observed) - log(predicted)) ^ 2))
+}
+
+mape <- function(observed, predicted) {
+  mean(abs((predicted - observed) / observed)) * 100
+}
+
+mae <- function(observed, predicted) {
+  mean(abs(observed - predicted))
 }
 ```
 
@@ -306,22 +330,27 @@ fit.lasso
 
 
 ```{r}
-pred <- predict(fit.lasso, newx = as.matrix(x_test_df), s = fit.lasso$lambda.min, type = "response")
-rmse_value <- rmse(y_test, pred)
-print(rmse_value) # 202.617
+regression_metrics <- function(model, data, y_real, y_wout_log=NULL) {
+ 
+  pred <- predict(model, newx = as.matrix(data), s = fit.lasso$lambda.min, type = "response")
+  
+  if (log_price) {
+      pred <- 10**pred
+      y_real <- y_wout_log
+  }
+  rmse_value <- rmse(y_real, pred)
+  mape <- mape(y_real, pred)
+  mae <- mae(y_real, pred)
+  cat('\nRMSE:', rmse_value, 'MAPE:', mape, 'MAE:', mae) 
+  
+  return(list(rmse=rmse_value, mape=mape, mae=mae))
+}
 
-# Calculate MAPE 
-mape <- mean(abs((y_test - pred) / y_test)) * 100
-print(mape) #10.0
+# TEST
+q <- regression_metrics(fit.lasso, x_test_df, y_test, y_test_orig)
 
-rm(pred)
-pred <- predict(fit.lasso, newx = as.matrix(x_train_df), s = fit.lasso$lambda.min, type = "response")
-rmse_value <- rmse(y_train, pred)
-print(rmse_value) # 202.617
-
-# Calculate MAPE 
-mape <- mean(abs((y_train - pred) / y_train)) * 100
-print(mape) #10.0
+# TRAIN
+q <- regression_metrics(fit.lasso, x_train_df, y_train, y_train_orig)
 ```
 
 ## Ouput coefficients 
@@ -508,6 +537,9 @@ plot_perc_error_community <- ggplot(test_graph_dt, aes(y=community, x=perc_error
   labs(y='', x="Prediction Error (%)") 
 plot_perc_error_community
 ```
+
+# Setting g 
+
 
 # BMS
 
