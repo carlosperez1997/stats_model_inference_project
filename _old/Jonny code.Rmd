@@ -1,0 +1,466 @@
+---
+title: "Project 5/12"
+output: html_notebook
+---
+```{r}
+rm(list = ls())
+```
+
+# Install packages
+```{r}
+library(mombf)
+library(dplyr)
+library(tidyr)
+library(ggsci)
+library(hdm)
+library(glmnet)
+library(ggplot2)
+library(tidyverse)
+library(HDCI)
+library(gridExtra)
+library(pROC)
+library("adapt4pv")
+library(readr)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(stringr)
+library(data.table)
+library(stringr)
+library(readr)
+library(tidyverse)
+```
+
+## Prep
+## Load data
+```{r}
+# Load data
+raw_train <- read.csv('data/realestate_train.csv')
+raw_test <- read.csv('data/realestate_test.csv')
+
+test <- raw_test 
+train <-raw_train
+
+# Convert date to numeric
+train$date_added <- as.Date(train$date_added)
+
+# Keep numeric columns
+numeric <- sapply(train, is.numeric)
+train <- train[, numeric]
+test <- test[, numeric]
+
+# Remove columns with 0 variance 
+test= train[,apply(train, 2, var) > 0] #remove columns with 0 variance
+train= train[,apply(train, 2, var) > 0] #remove columns with 0 variance
+```
+
+## Remove highly correlated variables
+```{r}
+# Check for correlation
+correlation_matrix <- cor(train)
+high_correlation <- which(abs(correlation_matrix) > 0.99, arr.ind = TRUE)
+
+# Return which variables are getting removex
+high_correlation <- high_correlation[high_correlation[, 1] < high_correlation[, 2], ]
+pairs_to_remove <- apply(high_correlation, 1, function(index) {
+  pair <- colnames(train)[index]
+  #cat("High correlation between:", pair[1], "and", pair[2], "\n")
+  #cat("Removing:", pair[2], "\n\n")
+  return(pair[2])
+})
+
+# Remove
+test <- test[, !colnames(train) %in% pairs_to_remove]
+train <- train[, !colnames(train) %in% pairs_to_remove]
+```
+
+## Prepare dataframes
+
+```{r}
+# Split into X and Y for scaling
+x_train <- select(train, -price)
+y_train <- train$price
+y_train <- y_train/1000
+
+x_test <- select(test, -price)
+y_test <- test$price
+y_test <- y_test/1000
+
+# Save unscaled
+x_train_unscaled <- x_train
+x_test_unscaled <- x_test
+
+# Scale 
+x_train <- scale(x_train)
+x_test <- scale(x_test)
+
+# Create dfs
+y_train_df <- data.frame(y_train)
+x_train_df <- data.frame(x_train)
+colnames(y_train_df)<-'price'
+train_df<-cbind(x_train_df,y_train_df)
+
+y_test_df <- data.frame(y_test)
+x_test_df <- data.frame(x_test)
+colnames(y_test_df)<-'price'
+test_df<-cbind(x_test_df,y_test_df)
+```
+
+## Define RMSE 
+```{r}
+# RMSE
+rmse <- function(observed, predicted) {
+  sqrt(mean((observed - predicted) ^ 2))
+}
+```
+
+## Summarize data 
+
+```{r}
+# Calculate statistics for y_train
+n_obs_train <- length(y_train_df)
+mean_train <- mean(y_train_df)
+quartiles_train <- quantile(as.matrix(y_train_df), probs = c(0.25, 0.5, 0.75))
+
+# Calculate statistics for y_test
+n_obs_test <- length(y_test_df)
+mean_test <- mean(y_test_df)
+quartiles_test <- quantile(as.matrix(y_test_df), probs = c(0.25, 0.5, 0.75))
+
+# Create the data frame with the statistics
+stats_table <- data.frame(
+  Dataset = c("y_train", "y_test"),
+  Observations = c(n_obs_train, n_obs_test),
+  Mean = c(mean_train, mean_test),
+  `1st Quartile` = c(quartiles_train[1], quartiles_test[1]),
+  Median = c(quartiles_train[2], quartiles_test[2]),
+  `3rd Quartile` = c(quartiles_train[3], quartiles_test[3])
+)
+
+stats_table_long <- stats_table %>% 
+  pivot_longer(cols = -Dataset, names_to = "Metric", values_to = "Value")
+
+# Spread the long format table to wide format with one column for y_train and one for y_test
+stats_table_wide <- stats_table_long %>% 
+  pivot_wider(names_from = Dataset, values_from = Value)
+
+# Create a rotated LaTeX formatted table
+output_stats <- 0
+if (output_stats == 1) {
+  kable(stats_table_wide, format = "latex", booktabs = TRUE, caption = "Descriptive Statistics of y_train and y_test", row.names = FALSE) %>%
+  kable_styling(full_width = FALSE, position = "center", latex_options = "striped") %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#56B4E9")
+}
+```
+
+# LASSO CV 
+
+## Fit model
+```{r}
+# Fit model
+fit.lasso = cv.glmnet(x=as.matrix(x_train_df), y=y_train, nfolds=10)
+fit.lasso
+```
+
+## Test out of sample
+```{r}
+pred <- predict(fit.lasso, newx = as.matrix(x_test_df), s = fit.lasso$lambda.min, type = "response")
+
+# RMSE
+rmse_value <- rmse(y_test, pred)
+print(rmse_value) # 202.617
+
+# Calculate MAPE 
+mape <- mean(abs((y_test - pred) / y_test)) * 100
+print(mape) #10.0
+```
+
+## Ouput coefficients 
+```{r}
+# Extract coefficients
+coef_lasso <- predict(fit.lasso, type = "coefficients", s = fit.lasso$lambda.min)
+coef_matrix <- as.matrix(coef_lasso)
+
+# Output non zero coefficients
+non_zero <- coef_matrix !=0
+coef_table <- data.frame(Variable = rownames(coef_matrix)[non_zero], Coefficients = coef_matrix[non_zero])
+coef_table <- coef_table[order(-abs(coef_table$Coefficients)),]
+coef_table$Coefficients <- round(coef_table$Coefficients, digits = 2)
+coef_table$Coefficients <- format(coef_table$Coefficients, scientific = FALSE)
+coef_table_output <- coef_table[0:20,]
+coef_table_output
+
+# Output to Latex
+output_lasso <- 0
+if (output_lasso == 1) {
+  kable(coef_table_output, format = "latex", booktabs = TRUE, caption = "Regression Output", row.names = FALSE) %>%
+  kable_styling(full_width = FALSE, position = "center") %>%
+  column_spec(1, bold = TRUE, border_right = TRUE) %>%
+  column_spec(2, width = "6em") %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#56B4E9")
+}
+```
+
+
+## Ouput collapsed coeffs 
+
+```{r}
+# Group prefixes for regression output
+coef_table <- coef_table %>%
+  mutate(prefix = case_when(
+    str_detect(Variable, "same_address_beds_area") ~ "Same address/beds/area",
+    str_detect(Variable, "same_address_beds_price") ~ "Same address/beds",
+    str_detect(Variable, "same_community_ptype") ~ "Same community/prop. type",
+    str_detect(Variable, "same_community_beds") ~ "Same community/beds",
+    str_detect(Variable, "same_community_area") ~ "Same community/area",
+    str_detect(Variable, "comm_avg_trans_value") ~ "Comm avg. trans value",
+    str_detect(Variable, "comm_offplan") ~ "Comm offplan",
+    str_detect(Variable, "comm_ready") ~ "Comm ready",
+    str_detect(Variable, "AED") ~ "AED exchange rate",
+    str_detect(Variable, "USD_") ~ "USD Crypto exchange rates",
+    str_detect(Variable, "same_ptype") ~ "Same property type",
+    str_detect(Variable, "area") ~ "Area",
+    str_detect(Variable, "furnished") ~ "Furnished",
+    str_detect(Variable, "baths") ~ "Baths",
+    str_detect(Variable, "balcony") ~ "Balcony",
+    str_detect(Variable, "swimming_pool") ~ "Swimming pool",
+    str_detect(Variable, "parking") ~ "Parking",
+    str_detect(Variable, "same_beds_") ~ "Same beds",
+    str_detect(Variable, "same_area_") ~ "Same area",
+    str_detect(Variable, "same_address") ~ "Same address",
+    str_detect(Variable, "metro") ~ "Metro",
+    str_detect(Variable, "market") ~ "Market",
+    str_detect(Variable, "hospital") ~ "Hospital",
+    str_detect(Variable, "community") ~ "Community",
+    str_detect(Variable, "(Intercept)") ~ "(Intercept)",
+    TRUE ~ "Misc" # For all other cases
+  ))
+```
+
+
+```{r}
+# Collapse the dataframe to only keep the first instance of each prefix
+# and count the number of variables of each type
+coef_table$Coefficients <- as.numeric(coef_table$Coefficients)
+collapsed_coef_matrix <- coef_table %>%
+  group_by(prefix) %>%
+  summarise(Mean = mean(Coefficients),
+            Min = min(Coefficients),
+            Max = max(Coefficients),
+            Count = n()) %>%
+  mutate(Mean = round(Mean, 2),
+         Min = round(Min, 2),
+         Max = round(Max, 2)) %>%
+  arrange(desc(Count))  # Sorting by Max in descending order
+
+
+# View the collapsed dataframe
+print(collapsed_coef_matrix)
+
+# Output to Latex
+output_lasso_2 <- 0
+if (output_lasso_2 == 1) {
+  kable(collapsed_coef_matrix, format = "latex", booktabs = TRUE, caption = "LASSO Regression results", row.names = FALSE) %>%
+  kable_styling(full_width = FALSE, position = "center") %>%
+  column_spec(1, border_right = TRUE) %>%
+  column_spec(2, width = "2em") %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#56B4E9")
+}
+```
+
+
+## Investigate percentage error
+```{r}
+# Average percentage error 
+compare_df <- data.frame(y_test = y_test, predictions = pred)
+compare_df$perc_error <- abs((compare_df$y_test-compare_df$s1)/compare_df$y_test)*100
+compare_df$error <- abs(compare_df$s1 -compare_df$y_test)
+
+# Calculate the deciles
+deciles <- quantile(compare_df$perc_error, probs = seq(0, 1, by = 0.1), na.rm = TRUE)
+print(deciles)
+```
+
+## Graphs 
+```{r}
+# Prepare data for graphs 
+test_graph <- data.frame(x_test_unscaled)
+test_graph$perc_error <- compare_df$perc_error
+test_graph$error  <- compare_df$error
+
+test_graph$price <- compare_df$y_test
+test_graph 
+```
+```{r}
+# Graph abs error
+plot_abs_error<- ggplot(test_graph, aes(x = price, y = error)) +
+  theme_minimal() +
+  geom_point(color = '#1f77b4' ,size = 0.5) +  # Scatter plot points
+  xlab("Price") +
+  ylab("Absolute Error") + 
+    theme(legend.position="none",
+        text = element_text(size = 16),  # Adjust the font size here
+        axis.title = element_text(size = 16),  # Adjust the title font size
+        axis.text = element_text(size = 10)) +  # Adjust the axis text font size
+  scale_x_continuous(labels = scales::comma) 
+plot_abs_error
+```
+
+
+```{r}
+# Graph percentage error
+plot_perc_error<- ggplot(test_graph, aes(x = price, y = perc_error)) +
+  theme_minimal() +
+  geom_point(color = '#1f77b4' ,size = 0.5) +  # Scatter plot points
+  xlab("Price") +
+  ylab("Percentage Error") + 
+    theme(legend.position="none",
+        text = element_text(size = 16),  # Adjust the font size here
+        axis.title = element_text(size = 16),  # Adjust the title font size
+        axis.text = element_text(size = 10)) +  # Adjust the axis text font size
+  scale_x_continuous(labels = scales::comma) 
+plot_perc_error
+```
+
+```{r}
+# Graph prediction error
+
+#Prepare data
+test_graph_dt <- test_graph %>% as.data.table
+
+test_graph_dt[, community := 'Dubai Marina']
+
+test_graph_dt<- test_graph_dt %>%
+  .[community_Jumeirah.Beach.Residence..JBR.==T, community := 'Jumeirah Beach \n Residence (JBR)'] %>%
+  .[community_Jumeirah.Lake.Towers..JLT.==T, community := 'Jumeirah Lake \n Towers (JLT)'] %>%
+  .[community_Jumeirah.Village.Circle..JVC.==T, community := 'Jumeirah Village \n Circle (JVC)']
+
+
+# Produce plot
+plot_perc_error_community <- ggplot(test_graph_dt, aes(y=community, x=perc_error, color=community)) + 
+  geom_violin(aes(fill = community,
+                  fill = after_scale(colorspace::lighten(fill, .2))),
+              draw_quantiles = c(0.05, 0.25, 0.5, 0.75, 0.95),
+              size = 0.2, scale='width', colour = "black") +
+  theme_minimal() + 
+  theme(legend.position="none",
+        text = element_text(size = 16),  # Adjust the font size here
+        axis.title = element_text(size = 16),  # Adjust the title font size
+        axis.text = element_text(size = 10),  # Adjust the axis text font size
+        axis.ticks = element_line(size = 0.8),
+        axis.title.y.left=element_text(color="black", size=14),
+        axis.text.y.left=element_text(color="black", size=12),
+        axis.title.y.right=element_text(color="black", size=14),
+        axis.text.y.right=element_text(color="black", size=14),
+        axis.text.x=element_text(size=12),
+        axis.title.x=element_text(size=16),
+        plot.title = element_text(hjust = 0.5, size = 16, face = "bold")) +  # Adjust the axis ticks size
+  scale_x_continuous(labels = scales::comma) +
+  labs(y='', x="Prediction Error (%)") 
+plot_perc_error_community
+```
+
+# BMS
+
+```{r}
+# Fit model
+fit.bayesreg <- modelSelection(price ~ ., data=train_df, priorCoef=zellnerprior(taustd =  1), priorDelta=modelbbprior(1,1), niter=30000)
+```
+
+```{r}
+# Convergence checks 
+margppest= matrix(NA,nrow=nrow(fit.bayesreg$postSample),ncol=ncol(fit.bayesreg$postSample))
+for (j in 1:ncol(fit.bayesreg$postSample)) {
+    margppest[,j]= cumsum(fit.bayesreg$postSample[,j])/(1:nrow(fit.bayesreg$postSample))
+}
+
+par(mar=c(4,5,.1,.1), cex.lab=1, cex.axis=1)
+plot(margppest[,1], type='l', ylim=c(0,1), xlab='Gibbs iteration', ylab='Estimated P(gamma_j=1 | y)')
+for (j in 2:ncol(margppest)) lines(margppest[,j])
+```
+
+
+```{r}
+bayes_pred= predict(fit.bayesreg, data = x_train_df, newdata =x_test_df)
+
+# RMSE
+rmse_value <- rmse(y_test, bayes_pred)
+print(rmse_value) # 211412.2
+
+# Calculate MAPE
+mape <- mean(abs((y_test - bayes_pred) / y_test)) * 100
+print(mape)
+```
+
+```{r}
+# Prepare data 
+test_graph$bayes_pred_25 <- bayes_pred[,2]
+test_graph$bayes_pred_975 <- bayes_pred[,3]
+test_graph$bayes_pred <- bayes_pred[,1]
+test_graph$perc_error_bayes <- abs((test_graph$price - test_graph$bayes_pred) / test_graph$price) * 100
+test_graph$perc_error_bayes <- (test_graph$price - test_graph$bayes_pred) 
+
+# New column to determine color
+test_graph$color <- ifelse(test_graph$price > test_graph$bayes_pred_25 & test_graph$price < test_graph$bayes_pred_975, "#1f77b4", "red")
+
+# Graph percentage error bayes with color condition
+plot_perc_error_bayes <- ggplot(test_graph, aes(x = price, y = perc_error_bayes, color = color)) +
+  theme_minimal() +
+  geom_point(size = 0.5) +  # Scatter plot points
+  xlab("Price") +
+  ylab("Percentage Error") +
+  theme(legend.position = "none",
+        text = element_text(size = 16),  # Adjust the font size here
+        axis.title = element_text(size = 16),  # Adjust the title font size
+        axis.text = element_text(size = 10)) +  # Adjust the axis text font size
+  scale_x_continuous(labels = scales::comma) +
+  scale_color_identity()  # Use the actual colors specified in the data frame
+
+plot_perc_error_bayes
+```
+
+```{r}
+freq_table_colour<- table(test_graph$color)
+freq_table_colour
+```
+
+
+
+```{r}
+#Prepare data
+test_graph_sorted<- test_graph %>% arrange(price) %>% mutate(obs = seq(1:length(price)))
+test_graph_dt_2 <- test_graph_sorted %>% as.data.table
+test_graph_dt_2[, community := 'Dubai Marina']
+test_graph_dt_2<- test_graph_dt_2 %>%
+  .[community_Jumeirah.Beach.Residence..JBR.==T, community := 'Jumeirah Beach \n Residence (JBR)'] %>%
+  .[community_Jumeirah.Lake.Towers..JLT.==T, community := 'Jumeirah Lake \n Towers (JLT)'] %>%
+  .[community_Jumeirah.Village.Circle..JVC.==T, community := 'Jumeirah Village \n Circle (JVC)']
+
+# Assuming 'community' is the column name that contains the community information
+filtered_data <- test_graph_dt_2 %>% 
+  filter(grepl("JVC", community))
+
+# Define colors for actual and prediction points
+colors <- c('actual' = 'blue', 'prediction' = 'red')
+
+# Create the plot
+ggplot(filtered_data, aes(x = seq_along(price), y = price)) + 
+  geom_point(aes(color = 'actual'), size = 0.1) + 
+  geom_point(aes(y = bayes_pred, color = 'prediction'), size = 0.1) + 
+    geom_errorbar(aes(ymin = bayes_pred_25, ymax = bayes_pred_975), width = 0.01) + 
+  labs(x = "Observation number (ranked)", 
+       y = "Price and Bayesian Prediction", 
+       color = "Legend") +
+  scale_color_manual(values = colors) + 
+  ggtitle('Credible Intervals for Predictions with BMA')
+```
+
+```{r}
+coef(fit.bayesreg)
+```
+
+```{r}
+coef(fit.bayesreg)[order(coef(fit.bayesreg)[,4], decreasing = TRUE),]
+```
+
+
