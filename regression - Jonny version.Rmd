@@ -320,6 +320,11 @@ colnames(y_test_df)<-'price'
 
 # Drop same price variables
 if (drop_prev_prices) {
+  # save data frame with price vars
+  x_test_df_with_pricevars <- x_test_df
+  x_train_df_with_pricevars <- x_train_df
+  
+  # Drop from main dfs
   x_test_df <- x_test_df %>% select(-contains("same"))
   x_train_df <- x_train_df %>% select(-contains("same"))
 }
@@ -459,6 +464,11 @@ lasso.bic <- function(y,x,extended=FALSE) {
 fit.lasso_ebic = lasso.bic(x=as.matrix(x_train_df), y=y_train ,extended = TRUE)
 fit.lasso_ebic
 ```
+```{r}
+# Lambda
+fit.lasso_ebic$lambda.opt
+
+```
 
 ### Ouput coefficients 
 ```{r}
@@ -494,6 +504,10 @@ if (output_lasso_ebic) {
 # Fit model
 fit.lasso = cv.glmnet(x=as.matrix(x_train_df), y=y_train, nfolds=10)
 fit.lasso
+```
+
+```{r}
+fit.lasso$lambda.min
 ```
 
 ###Test out of sample
@@ -586,6 +600,9 @@ if (output_lasso_2) {
   column_spec(2, width = "2em") %>%
   row_spec(0, bold = TRUE, color = "white", background = "#56B4E9")
 }
+
+
+
 ```
 
 
@@ -634,20 +651,6 @@ plot_abs_error
 ```
 
 
-```{r}
-# Graph percentage error
-plot_perc_error<- ggplot(test_graph, aes(x = price, y = perc_error)) +
-  theme_minimal() +
-  geom_point(color = '#1f77b4' ,size = 0.5) +  # Scatter plot points
-  xlab("Price") +
-  ylab("Percentage Error") + 
-    theme(legend.position="none",
-        text = element_text(size = 16),  # Adjust the font size here
-        axis.title = element_text(size = 16),  # Adjust the title font size
-        axis.text = element_text(size = 10)) +  # Adjust the axis text font size
-  scale_x_continuous(labels = scales::comma) 
-plot_perc_error
-```
 
 ```{r}
 # Graph prediction error
@@ -687,6 +690,64 @@ plot_perc_error_community <- ggplot(test_graph_dt[test_graph_dt$perc_error < 100
   labs(y='', x="Prediction Error (%)") 
 plot_perc_error_community
 
+```
+```{r}
+# Graph percentage error
+plot_perc_error<- ggplot(test_graph, aes(x = price, y = perc_error)) +
+  theme_minimal() +
+  geom_point(color = '#1f77b4' ,size = 0.5) +  # Scatter plot points
+  xlab("Price") +
+  ylab("Percentage Error") + 
+    theme(legend.position="none",
+        text = element_text(size = 16),  # Adjust the font size here
+        axis.title = element_text(size = 16),  # Adjust the title font size
+        axis.text = element_text(size = 10)) +  # Adjust the axis text font size
+  scale_x_continuous(labels = scales::comma) 
+plot_perc_error
+```
+
+```{r}
+test_graph$community_var <- test_graph_dt$community
+
+dubai_marina_data <- test_graph %>% 
+  filter(community_var == 'Dubai Marina')
+
+# Graph percentage error for Dubai Marina
+plot_perc_error<- ggplot(dubai_marina_data, aes(x = price, y = perc_error)) +
+  theme_minimal() +
+  geom_point(color = '#1f77b4' ,size = 0.5) +  # Scatter plot points
+  xlab("Price") +
+  ylab("Percentage Error") + 
+    theme(legend.position="none",
+        text = element_text(size = 16),  # Adjust the font size here
+        axis.title = element_text(size = 16),  # Adjust the title font size
+        axis.text = element_text(size = 10)) +  # Adjust the axis text font size
+  scale_x_continuous(labels = scales::comma) 
+plot_perc_error
+```
+
+```{r}
+# Summary table 
+summary_table <- test_graph_dt %>%
+  group_by(community) %>%
+  summarise(
+    Q1 = paste0(round(quantile(perc_error, 0.25, na.rm = TRUE), 2), "%"),
+    Median = paste0(round(median(perc_error, na.rm = TRUE) , 2), "%"),
+    Mean = paste0(round(mean(perc_error, na.rm = TRUE), 2), "%"),
+    Q3 = paste0(round(quantile(perc_error, 0.75, na.rm = TRUE), 2), "%"),
+  )
+
+print(summary_table)
+
+summary_tab_output<-F 
+
+if (summary_tab_output) {
+  kable(summary_table, "latex", booktabs = TRUE, caption = "Summary Table of perc_error by community") %>%
+  kable_styling(latex_options = c("striped", "scale_down")) %>%
+  add_header_above(c(" " = 1, "Statistics" = 5)) %>%
+  column_spec(1, bold = TRUE, color = "white", background = "#56B4E9") %>%
+  column_spec(2:6, background = "#F0F0F0")
+}
 ```
 
 # Setting g 
