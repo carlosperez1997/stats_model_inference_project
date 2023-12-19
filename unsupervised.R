@@ -7,7 +7,8 @@ library(tidyverse)
 library(factoextra)
 library(BiocManager)
 
-DIR <- '/Users/carlosperezricardo/Downloads/'
+#DIR <- '/Users/carlosperezricardo/Downloads/'
+DIR <- '/Users/jonnycodd/Downloads/'
 
 drop_X <- function(df) {
   df$X <- NULL
@@ -181,6 +182,24 @@ determine_sign_pca <- function(pca_transformed_data, data, col ) {
                                               PC3_offer = pca_transformed_data[,3])
                                   ) %>%
   .[, date := as.Date(paste(dt_year, dt_month, "01", sep = "-"))]
+  
+# Ouput
+pca_demand <- cbind(date = emirate_demand_transformed$date, 
+                    PC1_demand = emirate_demand_transformed$PC1_demand, 
+                    PC2_demand = emirate_demand_transformed$PC2_demand, 
+                    PC3_demand = emirate_demand_transformed$PC3_demand)
+
+filename <- paste0(DIR, "pca_demand.csv")
+write.csv(pca_demand, file = filename, row.names = FALSE)
+
+
+pca_offer <- cbind(date = emirate_offer_transformed $date, 
+                    PC1_offer = emirate_offer_transformed$PC1_offer, 
+                    PC2_offer = emirate_offer_transformed$PC2_offer,
+                    PC3_offer = emirate_offer_transformed$PC3_offer)
+
+filename <- paste0(DIR, "pca_offer.csv")
+write.csv(pca_offer, file = filename, row.names = FALSE)
 
 
 
